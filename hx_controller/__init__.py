@@ -1,13 +1,12 @@
 import random
 from abc import ABC, abstractmethod
-from typing import Tuple
+from typing import Any, Tuple
 
-from pychrome.tab import Tab
 import json
 
 
 class HXController(object):
-    def __init__(self, browser_tab: Tab, username: str) -> None:
+    def __init__(self, browser_tab: Any, username: str) -> None:
         self.browser_tab = browser_tab
         self._buttons_state = {
             'left': False,
