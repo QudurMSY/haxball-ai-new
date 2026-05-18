@@ -5,7 +5,6 @@ from typing import List
 
 import numpy as np
 from simulator import create_start_conditions
-from simulator.simulator.cenv import Vector as CVector, create_start_conditions as Ccreate_start_conditions
 from hx_controller.haxball_gym import Haxball
 from multiprocessing import Process, Pipe, cpu_count
 from multiprocessing.connection import Connection
@@ -17,7 +16,7 @@ class HaxballVecEnv:
         self.num_envs = num_fields * 2
         self.envs = []
         for i in range(num_fields):
-            gameplay = Ccreate_start_conditions()
+            gameplay = create_start_conditions()
             env = Haxball(gameplay=gameplay, max_ticks=max_ticks)
             self.envs.append(env)
 
@@ -148,7 +147,7 @@ class HaxballVecEnv:
 
 
 def env_worker(conn: Connection, **env_kwargs):
-    gameplay = Ccreate_start_conditions()
+    gameplay = create_start_conditions()
     env = Haxball(gameplay=gameplay, **env_kwargs)
     i = 0
     while True:
@@ -295,7 +294,7 @@ def env_worker_multiple_envs(conn: Connection, **env_kwargs):
         if field_id in envs:
             return envs[field_id]
         else:
-            gameplay = Ccreate_start_conditions()
+            gameplay = create_start_conditions()
             env = Haxball(gameplay=gameplay, **env_kwargs)
             envs[field_id] = env
             return env

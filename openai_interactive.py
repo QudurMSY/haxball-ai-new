@@ -132,14 +132,14 @@ def main() -> None:
     clock = pygame.time.Clock()
     screen = pygame.display.set_mode((900, 520))
 
-    gameplay = Ccreate_start_conditions(
-        posizione_palla=CVector(0, 0),
-        velocita_palla=CVector(0, 0),
-        posizione_blu=CVector(277.5, 0),
-        velocita_blu=CVector(0, 0),
+    gameplay = create_start_conditions(
+        posizione_palla=Vector(0, 0),
+        velocita_palla=Vector(0, 0),
+        posizione_blu=Vector(277.5, 0),
+        velocita_blu=Vector(0, 0),
         input_blu=0,
-        posizione_rosso=CVector(-277.5, 0),
-        velocita_rosso=CVector(0, 0),
+        posizione_rosso=Vector(-277.5, 0),
+        velocita_rosso=Vector(0, 0),
         input_rosso=0,
         tempo_iniziale=0,
         punteggio_rosso=0,
