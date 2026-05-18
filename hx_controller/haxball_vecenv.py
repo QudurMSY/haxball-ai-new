@@ -3,23 +3,20 @@ import random
 from copy import copy
 from typing import List
 
-from baselines.common.vec_env import VecEnv
 import numpy as np
-from baselines.common.vec_env.util import obs_space_info
 from simulator import create_start_conditions
-from simulator.simulator.cenv import Vector as CVector, create_start_conditions as Ccreate_start_conditions
 from hx_controller.haxball_gym import Haxball
 from multiprocessing import Process, Pipe, cpu_count
 from multiprocessing.connection import Connection
 
 
-class HaxballVecEnv(VecEnv):
+class HaxballVecEnv:
     def __init__(self, num_fields, max_ticks=2400):
         self.num_fields = num_fields
         self.num_envs = num_fields * 2
         self.envs = []
         for i in range(num_fields):
-            gameplay = Ccreate_start_conditions()
+            gameplay = create_start_conditions()
             env = Haxball(gameplay=gameplay, max_ticks=max_ticks)
             self.envs.append(env)
 
@@ -27,10 +24,7 @@ class HaxballVecEnv(VecEnv):
 
         self.observation_space = env.observation_space
         self.action_space = env.action_space
-        self.keys, shapes, dtypes = obs_space_info(self.observation_space)
-
-        self.buf_obs = {k: np.zeros((self.num_envs,) + tuple(shapes[k]), dtype=dtypes[k]) for k in self.keys}
-        self.buf_dones = np.zeros((self.num_envs,), dtype=np.bool)
+        self.buf_dones = np.zeros((self.num_envs,), dtype=bool)
         self.buf_rews = np.zeros((self.num_envs,), dtype=np.float32)
         self.buf_infos = [{} for _ in range(self.num_envs)]
         self.actions = None
@@ -40,7 +34,7 @@ class HaxballVecEnv(VecEnv):
         print('reset_all')
         all_results = []
         for e in range(self.num_fields):
-            obs = self.envs[e].reset()
+            obs, _ = self.envs[e].reset()
             all_results.append(obs)
             all_results.append(obs)
             # all_results.append(obs)
@@ -84,7 +78,8 @@ class HaxballVecEnv(VecEnv):
         for env in self.envs:
             is_done = False
             for red_team in (True, False):
-                obs, rew, done, info = env.step_wait(red_team=red_team)
+                obs, rew, terminated, truncated, info = env.step_wait(red_team=red_team)
+                done = terminated or truncated
                 obss.append(obs)
                 rews.append(rew)
                 dones.append(done)
@@ -101,7 +96,7 @@ class HaxballVecEnv(VecEnv):
         if self.num_envs == 1:
             return self.envs[0].render(mode=mode)
         else:
-            return super().render(mode=mode)
+            return self.get_images()
 
     def invert_state(self, state):
         new_state = copy(state)
@@ -152,7 +147,7 @@ class HaxballVecEnv(VecEnv):
 
 
 def env_worker(conn: Connection, **env_kwargs):
-    gameplay = Ccreate_start_conditions()
+    gameplay = create_start_conditions()
     env = Haxball(gameplay=gameplay, **env_kwargs)
     i = 0
     while True:
@@ -172,7 +167,8 @@ def env_worker(conn: Connection, **env_kwargs):
             is_done = False
 
             for red_team in (True, False):
-                obs, rew, done, info = env.step_wait(red_team=red_team)
+                obs, rew, terminated, truncated, info = env.step_wait(red_team=red_team)
+                done = terminated or truncated
                 obss.append(obs)
                 rews.append(rew)
                 dones.append(done)
@@ -184,7 +180,7 @@ def env_worker(conn: Connection, **env_kwargs):
             res = np.array(obss), np.array(rews), np.array(dones), np.array(infos)
             conn.send(res)
         elif cmd == 'reset':
-            ob = env.reset()
+            ob, _ = env.reset()
             conn.send([ob, ob])
         elif cmd == 'render':
             res = env.render(mode='rgb_array')
@@ -227,7 +223,6 @@ class HaxballSubProcVecEnv(HaxballVecEnv):
 
         self.observation_space = observation_space
         self.action_space = action_space
-        self.keys, shapes, dtypes = obs_space_info(self.observation_space)
         self.waiting = False
 
     def set_num_fields(self, num_fields):
@@ -299,7 +294,7 @@ def env_worker_multiple_envs(conn: Connection, **env_kwargs):
         if field_id in envs:
             return envs[field_id]
         else:
-            gameplay = Ccreate_start_conditions()
+            gameplay = create_start_conditions()
             env = Haxball(gameplay=gameplay, **env_kwargs)
             envs[field_id] = env
             return env
@@ -358,7 +353,8 @@ def env_worker_multiple_envs(conn: Connection, **env_kwargs):
                 is_done = False
 
                 for red_team in (True, False):
-                    obs, rew, done, info = env.step_wait(red_team=red_team)
+                    obs, rew, terminated, truncated, info = env.step_wait(red_team=red_team)
+                    done = terminated or truncated
                     obss.append(obs)
                     rews.append(rew)
                     dones.append(done)
@@ -377,7 +373,7 @@ def env_worker_multiple_envs(conn: Connection, **env_kwargs):
         elif cmd == 'reset':
             field_id = data
             env = get_env(field_id)
-            ob = env.reset()
+            ob, _ = env.reset()
             conn.send([ob, ob])
         elif cmd == 'render':
             field_id = data

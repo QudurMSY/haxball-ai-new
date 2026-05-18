@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "Cython>=3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "haxball-ai"
+version = "0.1.0"
+description = "Haxball reinforcement-learning environment modernized for Gymnasium and Stable-Baselines3."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "gymnasium",
+  "stable-baselines3",
+  "pygame",
+  "numpy",
+  "Cython",
+  "torch",
+  "tqdm",
+  "pytest",
+  "pandas",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["simulator/tests"]

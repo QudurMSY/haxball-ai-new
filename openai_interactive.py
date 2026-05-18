@@ -1,246 +1,188 @@
-import os
-import sys
-import time
-from argparse import Namespace
+"""Play Haxball against a Stable-Baselines3 PPO policy.
 
-import gym
+The old version of this script loaded TensorFlow 1.x/OpenAI Baselines checkpoints.
+Modern checkpoints should be saved with Stable-Baselines3, for example as
+``models/haxball_ppo.zip``.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
 import pygame
-from baselines.a2c.runner import Runner
-from baselines.common import set_global_seeds
-from baselines.common.cmd_util import make_env, make_vec_env
-from baselines.common.policies import build_policy
-from baselines.a2c.a2c import Model
-from baselines.common import set_global_seeds, explained_variance
-from baselines.ppo2.ppo2 import safemean
-from baselines.ppo2.model import Model as PPOModel
-# sys.path.append('./baselines')
-from baselines.common.vec_env import DummyVecEnv, VecEnv
-from baselines.common.vec_env.test_vec_env import SimpleEnv
-from baselines.run import build_env
+from stable_baselines3 import PPO
 
 from hx_controller.haxball_gym import Haxball
-from hx_controller.haxball_vecenv import HaxballVecEnv, HaxballSubProcVecEnv, HaxballProcPoolVecEnv
-from hx_controller.openai_model_torneo import A2CModel
-from simulator import create_start_conditions, Vector
-from simulator.simulator.cenv import Vector as CVector, create_start_conditions as Ccreate_start_conditions
-import numpy as np
-from collections import deque
-
+from simulator import Vector, create_start_conditions
 from simulator.visualizer import draw_frame
-from torneo.models import StaticModel, RandomModel, PazzoModel, MoreRealisticModel
+
+
+DEFAULT_MODEL_PATH = Path("models/haxball_ppo.zip")
+
+
+class SB3Model:
+    """Small adapter that exposes a single-action ``predict`` API."""
+
+    def __init__(self, model_path: Path, deterministic: bool = True) -> None:
+        self.model_path = model_path
+        self.deterministic = deterministic
+        self.model = PPO.load(model_path)
+
+    def predict(self, obs: np.ndarray) -> int:
+        action, _ = self.model.predict(obs, deterministic=self.deterministic)
+        return int(np.asarray(action).item())
+
+
+class StaticActionModel:
+    """Fallback model that always returns the configured action."""
+
+    def __init__(self, default_action: int = 0) -> None:
+        self.default_action = default_action
+
+    def predict(self, obs: np.ndarray) -> int:
+        return self.default_action
+
+
+class RandomActionModel:
+    """Fallback model that samples directly from the environment action space."""
+
+    def __init__(self, action_space) -> None:
+        self.action_space = action_space
+
+    def predict(self, obs: np.ndarray) -> int:
+        return int(self.action_space.sample())
 
 
 class DelayedModel:
-    def __init__(self, env: Haxball, model: A2CModel, play_red: bool) -> None:
+    """Poll the Gymnasium env, predict an action, then apply it after a delay."""
+
+    def __init__(self, env: Haxball, model, play_red: bool) -> None:
         self.state = 0
         self.env = env
         self.model = model
         self.play_red = play_red
         self.wait_time = 2
+        self.obs: Optional[np.ndarray] = None
+        self.reward = 0.0
+        self.terminated = False
+        self.truncated = False
+        self.info = {}
+        self.action = 0
 
     def gameplay_tick(self):
         if self.state == 0:
-            # Prendiamo obs
-            self.obs, self.rew, self.done, self.info = self.env.step_wait(red_team=not play_red)
-
-            # print(obs)
-            reward = self.rew
-            if self.done:
-                env.reset()
-
+            self.obs, self.reward, self.terminated, self.truncated, self.info = self.env.step_wait(
+                red_team=not self.play_red
+            )
+            if self.terminated or self.truncated:
+                self.obs, _ = self.env.reset()
             self.state = 2
             self.wait_time = 0
 
         elif self.state == 1:
-            # Aspettiamo un po'
             if self.wait_time == 0:
                 self.state = 2
             self.wait_time -= 1
 
         elif self.state == 2:
-            # Facciamo una predizione
-            self.actions, self.rew, _, _ = self.model.step(np.array([self.obs]), M=[self.done], S=None)
+            self.action = self.model.predict(self.obs)
             self.state = 4
             self.wait_time = 0
 
         elif self.state == 3:
-            # Aspettiamo un po'
             if self.wait_time == 0:
                 self.state = 4
             self.wait_time -= 1
 
         elif self.state == 4:
-            ret = float(self.rew[0])
-            # actions, rew, _, _ = model.step(obs, S=None, M=[0])
-            action = self.actions[0]
-
-            self.env.step_async(action, red_team=not self.play_red)
+            self.env.step_async(self.action, red_team=not self.play_red)
             self.state = 0
             self.wait_time = 5
 
         elif self.state == 5:
-            # Aspettiamo un po'
             if self.wait_time == 0:
                 self.state = 0
             self.wait_time -= 1
 
 
-if __name__ == '__main__':
-    args_namespace = Namespace(
-        alg='a2c',
-        env='haxball-v0',
-        num_env=None,
-        # env='PongNoFrameskip-v4',
-        env_type=None, gamestate=None, network=None, num_timesteps=1000000.0, play=False,
-        reward_scale=1.0, save_path=None, save_video_interval=0, save_video_length=200, seed=None)
-    # env2 = build_env(args_namespace)
-
-    try:
-        from mpi4py import MPI
-    except ImportError:
-        MPI = None
-    from baselines import logger
-
-    nsteps = 3
-    gamma = 0.99
-    nenvs = 2
-    total_timesteps = int(15e7)
-    log_interval = 100
-    load_path = None
-    # load_path = 'ppo2.h5'
-    load_path = 'ppo2_best_so_far2.h5'
-    # load_path = 'ppo2_base_delayed2.h5'
-    # load_path = 'models23/ppo_model_3.h5'
-    # model_i = 3
-    model_i = ''
-    # load_path = 'models/%s.h5' % model_i
-
-    max_ticks = int(60*3*(1/0.016))
-    env = HaxballProcPoolVecEnv(num_fields=nenvs, max_ticks=max_ticks)
-    policy = build_policy(env=env, policy_network='mlp', num_layers=4, num_hidden=256)
-    # policy = build_policy(env=env, policy_network='lstm', nlstm=512)  # num_layers=4, num_hidden=256)
-
-    model = A2CModel(policy, model_name='ppo_model_0', env=env, nsteps=nsteps, ent_coef=0.05, total_timesteps=total_timesteps, lr=7e-4)  # 0.005) #, vf_coef=0.0)
-    if load_path is not None and os.path.exists(load_path):
-        model.load(load_path)
-    # model = StaticModel()
-    # model = RandomModel(action_space=env.action_space)
-    # model = PazzoModel(action_space=env.action_space)
-    # model = StaticModel(default_action=7, action_space=env.action_space)
-    # model = StaticModel(action_space=env.action_space)
-    # model = MoreRealisticModel(action_space=env.action_space)
-    # nbatch = 100 * 12
-    # nbatch_train = nbatch // 4
-    # model = PPOModel(policy=policy, nsteps=12, ent_coef=0.05, ob_space=env.observation_space, ac_space=env.action_space, nbatch_act=100, nbatch_train=nbatch_train, vf_coef=0.5, max_grad_norm=0.5)# 0.005) #, vf_coef=0.0)
+def build_ai_model(model_path: Path, fallback: str, action_space):
+    if model_path.exists():
+        return SB3Model(model_path)
+    if fallback == "random":
+        return RandomActionModel(action_space)
+    return StaticActionModel()
 
 
-    size = width, height = 900, 520
-    center = (width // 2, height // 2 + 30)
-    black = 105, 150, 90
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Play against a Stable-Baselines3 Haxball PPO agent.")
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH, help="Path to a SB3 PPO .zip model.")
+    parser.add_argument("--play-red", action="store_true", help="Control the red player instead of blue.")
+    parser.add_argument("--fallback", choices=("static", "random"), default="static", help="AI used if --model is absent.")
+    parser.add_argument("--max-ticks", type=int, default=int(60 * 3 * (1 / 0.016)) * 2)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
 
     pygame.init()
     clock = pygame.time.Clock()
-    screen = pygame.display.set_mode(size)
+    screen = pygame.display.set_mode((900, 520))
 
-    gameplay = Ccreate_start_conditions(
-        posizione_palla=CVector(0, 0),
-        velocita_palla=CVector(0, 0),
-        posizione_blu=CVector(277.5, 0),
-        velocita_blu=CVector(0, 0),
+    gameplay = create_start_conditions(
+        posizione_palla=Vector(0, 0),
+        velocita_palla=Vector(0, 0),
+        posizione_blu=Vector(277.5, 0),
+        velocita_blu=Vector(0, 0),
         input_blu=0,
-        posizione_rosso=CVector(-277.5, 0),
-        velocita_rosso=CVector(0, 0),
+        posizione_rosso=Vector(-277.5, 0),
+        velocita_rosso=Vector(0, 0),
         input_rosso=0,
         tempo_iniziale=0,
         punteggio_rosso=0,
-        punteggio_blu=0
+        punteggio_blu=0,
     )
 
-    env = Haxball(gameplay=gameplay, max_ticks=max_ticks*2)
-    obs = env.reset()
-    action = 0
-    play_red = 0
+    env = Haxball(gameplay=gameplay, max_ticks=args.max_ticks)
+    env.reset()
+    ai_model = build_ai_model(args.model, args.fallback, env.action_space)
+    delayed_model = DelayedModel(env, ai_model, args.play_red)
 
-    dm = DelayedModel(env, model, play_red)
-
+    human_write_index = 1 if args.play_red else 2
     blue_unpressed = True
-    red_unpressed = True
 
-    D_i = 1 if play_red else 2
-    i = 0
-    reward = None
-    ret = None
-    next_action = 0
     while True:
-        i += 1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 sys.exit()
 
-        gameplay.Pa.D[D_i].mb = 0
+        gameplay.Pa.D[human_write_index].mb = 0
         keys = pygame.key.get_pressed()
         if keys[pygame.K_UP]:
-            gameplay.Pa.D[D_i].mb |= 1
+            gameplay.Pa.D[human_write_index].mb |= 1
         if keys[pygame.K_DOWN]:
-            gameplay.Pa.D[D_i].mb |= 2
+            gameplay.Pa.D[human_write_index].mb |= 2
         if keys[pygame.K_RIGHT]:
-            gameplay.Pa.D[D_i].mb |= 8
+            gameplay.Pa.D[human_write_index].mb |= 8
         if keys[pygame.K_LEFT]:
-            gameplay.Pa.D[D_i].mb |= 4
+            gameplay.Pa.D[human_write_index].mb |= 4
         if keys[pygame.K_SPACE]:
             if blue_unpressed:
-                gameplay.Pa.D[D_i].mb |= 16
-                gameplay.Pa.D[D_i].bc = 1
+                gameplay.Pa.D[human_write_index].mb |= 16
+                gameplay.Pa.D[human_write_index].bc = 1
             blue_unpressed = False
         else:
-            gameplay.Pa.D[D_i].bc = 0
+            gameplay.Pa.D[human_write_index].bc = 0
             blue_unpressed = True
 
-        # a1, a2 = data
-        # env.step_async(a1, red_team=True)
-        dm.gameplay_tick()
-
-        # obs = env.get_observation(action)
-        # actions = model.step(obs)
-
-        # gameplay.Pa.D[1].mb = 0
-        # gameplay.Pa.D[1].bc = 0
-        # keys = pygame.key.get_pressed()
-        # if keys[pygame.K_w]:
-        #     gameplay.Pa.D[1].mb |= 1
-        # if keys[pygame.K_s]:
-        #     gameplay.Pa.D[1].mb |= 2
-        # if keys[pygame.K_d]:
-        #     gameplay.Pa.D[1].mb |= 8
-        # if keys[pygame.K_a]:
-        #     gameplay.Pa.D[1].mb |= 4
-        # if keys[pygame.K_LCTRL]:
-        #     if red_unpressed:
-        #         gameplay.Pa.D[1].mb |= 16
-        #         gameplay.Pa.D[1].bc = 1
-        #     red_unpressed = False
-        # else:
-        #     red_unpressed = True
-
-        draw_frame(screen, gameplay, reward=reward, ret=ret)
-
-        # screen.blit(ball, ballrect)
+        delayed_model.gameplay_tick()
+        draw_frame(screen, gameplay, reward=delayed_model.reward, ret=delayed_model.info.get("score"))
         pygame.display.flip()
         clock.tick(60)
         gameplay.step(1)
 
-        # if gameplay.zb == 2:
-        #     gameplay = create_start_conditions(
-        #         posizione_palla=Vector(0, 0),
-        #         velocita_palla=Vector(0, 0),
-        #         posizione_blu=Vector(277.5, 0),
-        #         velocita_blu=Vector(0, 0),
-        #         input_blu=0,
-        #         posizione_rosso=Vector(-277.5, 0),
-        #         velocita_rosso=Vector(0, 0),
-        #         input_rosso=0,
-        #         tempo_iniziale=gameplay.Ac,
-        #         punteggio_rosso=gameplay.Kb,
-        #         punteggio_blu=gameplay.Cb,
-        #         commincia_rosso=gameplay.Jd.sn == 't-red'
-        #     )
+
+if __name__ == "__main__":
+    main()

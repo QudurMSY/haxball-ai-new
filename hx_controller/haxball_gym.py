@@ -6,14 +6,14 @@ from threading import Thread
 from typing import Optional
 
 import pygame
-from gym.core import Env
-from gym.spaces import Discrete, Box
+import gymnasium as gym
+from gymnasium.spaces import Discrete, Box
 from simulator import create_start_conditions, Vector, GamePlay
 from simulator.visualizer import draw_frame
 import numpy as np
 
 
-class Haxball(Env):
+class Haxball(gym.Env):
     """
     Gli input sono:
         0:  posizione x del giocatore
@@ -44,10 +44,14 @@ class Haxball(Env):
         9: Premere SPACE (fino a t+1)
     """
 
-    def __init__(self, gameplay: Optional[GamePlay]=None, max_ticks=600) -> None:
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 60}
+
+    def __init__(self, gameplay: Optional[GamePlay]=None, max_ticks=600, render_mode: Optional[str] = None) -> None:
+        super().__init__()
         self.action_space = Discrete(10)
-        self.observation_space = Box(low=-5000, high=5000, shape=(14, ))
+        self.observation_space = Box(low=-5000, high=5000, shape=(14,), dtype=np.float32)
         self.reward_range = (-10_000, 10_000)
+        self.render_mode = render_mode
 
         self._red_player_read_index = 5
         self._blue_player_read_index = 6
@@ -293,7 +297,25 @@ class Haxball(Env):
         if state_only:
             return state
 
-        return state, reward/1000, done, {'score': score, 'ticks': self._ticks}
+        terminated = done
+        truncated = False
+        reason = None
+        if terminated:
+            if self.gameplay.red_scored or self.gameplay.blue_scored:
+                reason = "goal"
+            elif self._ticks >= self.max_ticks:
+                terminated = False
+                truncated = True
+                reason = "time_limit"
+            elif self._ticks >= self.max_ticks // 8:
+                reason = "start_timeout"
+
+        info = {
+            'score': score,
+            'ticks': self._ticks,
+            'termination_reason': reason,
+        }
+        return np.asarray(state, dtype=np.float32), float(reward / 1000), terminated, truncated, info
 
     def step(self, action):
         # Invio degli input
@@ -346,15 +368,18 @@ class Haxball(Env):
         obs = [self.get_observation(red_team) for red_team in (True, False)]
         return obs
 
-    def reset(self, reward_functions=(None, None)):
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
         self.gameplay.reset()
         self._ticks = 0
         self.last_red_obs_tick = 0
         self.last_blue_obs_tick = 0
 
-        obs = [self.get_observation(red_team, state_only=True, reward_function=reward_functions[i]) for i, red_team in ((0, True), (1, False))]
+        options = options or {}
+        reward_functions = options.get('reward_functions', (None, None))
+        obs = self.get_observation(True, state_only=True, reward_function=reward_functions[0])
 
-        return obs[0]
+        return np.asarray(obs, dtype=np.float32), {}
 
     def render(self, mode='human'):
         if mode == 'disable':
