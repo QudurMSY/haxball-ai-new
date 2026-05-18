@@ -15,7 +15,8 @@ import pygame
 from stable_baselines3 import PPO
 
 from hx_controller.haxball_gym import Haxball
-from simulator import Vector, create_start_conditions
+from simulator.simulator.cenv import Vector as CVector
+from simulator.simulator.cenv import create_start_conditions as Ccreate_start_conditions
 from simulator.visualizer import draw_frame
 
 
