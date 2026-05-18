@@ -29,7 +29,8 @@ The environment is exposed as `haxball_ai.env.HaxballEnv` and still uses the sim
 
 ## Installation
 
-Quick install if you already know what you are doing:
+Quick install if you already know what you are doing and your terminal uses
+Bash or Zsh:
 
 ```bash
 python -m venv .venv
@@ -37,6 +38,17 @@ source .venv/bin/activate
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements.txt
 cd simulator && python setup.py build_ext --inplace && cd ..
+python -m pytest
+```
+
+If your CachyOS terminal uses Fish, use the Fish activation file instead:
+
+```fish
+python -m venv .venv
+source .venv/bin/activate.fish
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
+cd simulator; and python setup.py build_ext --inplace; and cd ..
 python -m pytest
 ```
 
@@ -113,14 +125,34 @@ python -m venv .venv
 
 #### 6. Activate the virtual environment
 
+First check which shell your terminal is using:
+
+```bash
+echo $SHELL
+```
+
+If the output ends with `bash` or `zsh`, activate the environment with:
+
 ```bash
 source .venv/bin/activate
 ```
 
+If the output ends with `fish`, activate the environment with this command
+instead:
+
+```fish
+source .venv/bin/activate.fish
+```
+
+Do **not** run `source .venv/bin/activate` in Fish. Fish will try to read the
+Bash activation script and can show an error like `"case" builtin not inside of
+switch block`. That error only means the wrong activation file was used. Run
+`source .venv/bin/activate.fish` instead.
+
 After this, your terminal prompt should start with `(.venv)`. That means the
 virtual environment is active. If you close the terminal later, come back to the
-project folder and run this same `source .venv/bin/activate` command again
-before using the project.
+project folder and run the correct `source` command for your shell again before
+using the project.
 
 #### 7. Upgrade Python packaging tools
 
@@ -138,6 +170,20 @@ This can take a while because PyTorch, Stable-Baselines3, Gymnasium, pygame,
 and the scientific Python packages are not tiny. Wait until the command finishes
 and returns you to the terminal prompt.
 
+Do **not** continue if this command ends with red error text or says a package
+failed to install. The next steps need the packages from `requirements.txt`,
+especially `Cython` and `pytest`. Check that they are installed with:
+
+```bash
+python -m pip show Cython pytest
+```
+
+If that command says `Package(s) not found`, run this again before continuing:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
 #### 9. Build the optional fast simulator extension
 
 The project can use a Cython simulator extension. Build it from inside the
@@ -149,12 +195,30 @@ python setup.py build_ext --inplace
 cd ..
 ```
 
+If this fails with `ModuleNotFoundError: No module named 'Cython'`, you skipped
+the dependency install step or it failed. Go back to the project root and install
+the requirements again:
+
+```bash
+cd ~/Projects/Haxball-AI
+python -m pip install -r requirements.txt
+```
+
+Then retry the simulator build.
+
 #### 10. Check that the installation works
 
 Run the test suite:
 
 ```bash
 python -m pytest
+```
+
+If this says `No module named pytest`, the dependency install step did not
+finish successfully. Run this from the project root, then try the test again:
+
+```bash
+python -m pip install -r requirements.txt
 ```
 
 You want to see the tests finish without failures. Warnings are usually okay,
@@ -198,12 +262,24 @@ python openai_interactive.py --fallback random
 * **`python: command not found`**: run
   `sudo pacman -S --needed python`.
 * **`pip` refuses to install globally**: that is expected on modern Arch-based
-  systems. Activate the virtual environment with
-  `source .venv/bin/activate`, then use `python -m pip ...`.
+  systems. Activate the virtual environment first, then use
+  `python -m pip ...`. Use `source .venv/bin/activate` for Bash/Zsh or
+  `source .venv/bin/activate.fish` for Fish.
+* **Fish says `"case" builtin not inside of switch block` when activating**:
+  you used the Bash activation file in Fish. Run
+  `source .venv/bin/activate.fish` instead.
 * **`error: command 'gcc' failed` or missing compiler tools**: run
   `sudo pacman -S --needed base-devel`, then rebuild the simulator extension.
-* **`ModuleNotFoundError` for a package from `requirements.txt`**: make sure
-  `(.venv)` appears in your prompt, then run
+* **`ModuleNotFoundError: No module named 'Cython'` while building the simulator**:
+  the Python dependencies were not installed in the active virtual environment.
+  Make sure `(.venv)` appears in your prompt, go back to the project root with
+  `cd ~/Projects/Haxball-AI`, then run
+  `python -m pip install -r requirements.txt` again.
+* **`No module named pytest` when running tests**: `pytest` was not installed in
+  the active virtual environment. Make sure `(.venv)` appears in your prompt,
+  then run `python -m pip install -r requirements.txt` again.
+* **`ModuleNotFoundError` for any other package from `requirements.txt`**: make
+  sure `(.venv)` appears in your prompt, then run
   `python -m pip install -r requirements.txt` again.
 * **pygame opens a blank window or no window**: make sure you are running from
   a normal graphical CachyOS desktop session, not from a TTY-only console or an
@@ -214,6 +290,13 @@ python openai_interactive.py --fallback random
   ```bash
   cd ~/Projects/Haxball-AI
   source .venv/bin/activate
+  ```
+
+  If you use Fish, run this instead:
+
+  ```fish
+  cd ~/Projects/Haxball-AI
+  source .venv/bin/activate.fish
   ```
 
 ## Gymnasium API
